@@ -1,9 +1,12 @@
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String, Bool
+from sensor_msgs.msg import LaserScan
 from std_srvs.srv import Trigger
 from geometry_msgs.msg import Twist 
 import ast
+import numpy as np
+from rclpy.qos import qos_profile_sensor_data
 
 class Aligner(Node):
     def __init__(self):
@@ -28,12 +31,37 @@ class Aligner(Node):
             10
         )
 
+        self.scan_subscriber = self.create_subscription(
+            LaserScan,
+            'scan',
+            self.scan_callback,
+            qos_profile_sensor_data
+        )
+
         self.srv = self.create_service(Trigger, 'aligner_service_call', self.align_service_callback)
 
         self.align_complete = False
         self.align_now = False
         self.target_index = 4
         self.last_max_index = None
+        self.converting = False
+    
+    def scan_callback(self, msg):
+        if self.converting == True:
+            return
+        self.converting = True
+        self.distances = np.array(msg.ranges)
+        self.distances[self.distances==0] = np.nan
+        self.distance_at_zero = 0
+        count = 0
+        for i in range(-2, 3):
+            if not np.isnan(self.distances[i]):
+                self.distance_at_zero += self.distances[i]
+                count += 1
+        self.distance_at_zero /= count if count > 0 else 0.5 
+
+        self.get_logger().info(f'Distance in front of robot is {self.distance_at_zero}')
+        self.converting = False
 
     
     def aligner_callback(self, msg):
@@ -41,6 +69,8 @@ class Aligner(Node):
             return
 
         threshold = 30
+        threshold2 = 0.2
+
         values = ast.literal_eval(msg.data)
         self.get_logger().info(f'Received IR values: {values}')
         if len(values) != 8:
@@ -55,10 +85,17 @@ class Aligner(Node):
             self.get_logger().info(f'Max reading above threshold at {max_index} is {max_value}')
 
             if max_index == self.target_index:
-                self.stop()
-                self.align_complete = True
-                self.aligner_complete_pub.publish(Bool(data=self.align_complete))
-                self.align_now = False
+                #self.stop()
+
+                if self.distance_at_zero > threshold2:
+                    self.forward()
+                    self.get_logger().info('Moving forward')
+                else:
+                    self.stop()
+                    self.align_complete = True
+                    self.aligner_complete_pub.publish(Bool(data=self.align_complete))
+                    self.align_now = False
+
             else:
                 direction = self.get_rotation_direction(max_index)
                 self.rotate(direction)
@@ -82,6 +119,12 @@ class Aligner(Node):
     def rotate(self, direction):
         twist = Twist()
         twist.angular.z = 0.3 * direction
+        self.cmd_pub.publish(twist)
+
+    def forward(self):
+        twist = Twist()
+        twist.linear.x = 0.05
+        twist.angular.z = 0.0
         self.cmd_pub.publish(twist)
 
     def stop(self):
