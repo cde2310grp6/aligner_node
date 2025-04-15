@@ -60,7 +60,7 @@ class Aligner(Node):
                 count += 1
         self.distance_at_zero /= count if count > 0 else 0.5 
 
-        self.get_logger().info(f'Distance in front of robot is {self.distance_at_zero}')
+        # self.get_logger().info(f'Distance in front of robot is {self.distance_at_zero}')
         self.converting = False
 
     
