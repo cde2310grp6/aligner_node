@@ -1,6 +1,7 @@
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import String, Bool
+from std_srvs.srv import Trigger
 from geometry_msgs.msg import Twist 
 import ast
 
@@ -21,12 +22,25 @@ class Aligner(Node):
             10
         )
 
+        self.aligner_complete_pub = self.create_publisher(
+            Bool,
+            '/align_complete',
+            10
+        )
+
+        self.srv = self.create_service(Trigger, 'aligner_service_call', self.align_service_callback)
+
+        self.align_complete = False
+        self.align_now = False
         self.target_index = 4
         self.last_max_index = None
 
     
     def aligner_callback(self, msg):
-        threshold = 25
+        if not self.align_now:
+            return
+
+        threshold = 30
         values = ast.literal_eval(msg.data)
         self.get_logger().info(f'Received IR values: {values}')
         if len(values) != 8:
@@ -35,15 +49,29 @@ class Aligner(Node):
         max_value = max(values)
         max_index = values.index(max_value)
 
+        direction = -1
+
         if max_value > threshold:
             self.get_logger().info(f'Max reading above threshold at {max_index} is {max_value}')
 
-            if max_index == self.target_index or max_index == (self.target_index + 1) or max_index == (self.target_index - 1):
+            if max_index == self.target_index:
                 self.stop()
+                self.align_complete = True
+                self.aligner_complete_pub.publish(Bool(data=self.align_complete))
+                self.align_now = False
             else:
                 direction = self.get_rotation_direction(max_index)
                 self.rotate(direction)
+        else:
+            self.rotate(direction)
 
+    def align_service_callback(self, request, response):
+        self.get_logger().info('Aligning robot...')
+        self.align_now = True
+        self.align_complete = False
+        response.success = True
+        response.message = 'Aligned robot...'
+        return response
 
     def get_rotation_direction(self, max_index):
         if max_index < 4:
