@@ -45,6 +45,9 @@ class Aligner(Node):
         self.target_index = 4
         self.last_max_index = None
         self.converting = False
+
+        self.rotation_start_time = None
+        self.rotation_timeout = 10
     
     def scan_callback(self, msg):
         if self.converting == True:
@@ -54,7 +57,7 @@ class Aligner(Node):
         self.distances[self.distances==0] = np.nan
         self.distance_at_zero = 0
         count = 0
-        for i in range(-2, 3):
+        for i in range(-4, 5):
             if not np.isnan(self.distances[i]):
                 self.distance_at_zero += self.distances[i]
                 count += 1
@@ -65,13 +68,16 @@ class Aligner(Node):
 
     
     def aligner_callback(self, msg):
+        current_time = self.get_clock().now()
         if not self.align_now:
             return
-
-        threshold = 30
-        threshold2 = 0.2
-
+        
         values = ast.literal_eval(msg.data)
+
+        threshold_dynamic = np.average(values) + 2
+        threshold = 32
+        threshold2 = 0.3
+        
         self.get_logger().info(f'Received IR values: {values}')
         if len(values) != 8:
             self.get_logger().warn('Invalid data received: length is not 8')
@@ -81,8 +87,14 @@ class Aligner(Node):
 
         direction = -1
 
-        if max_value > threshold:
-            self.get_logger().info(f'Max reading above threshold at {max_index} is {max_value}')
+        if max_value > threshold or max_value > threshold_dynamic: 
+            if max_value > threshold and max_value < threshold_dynamic:
+                self.get_logger().info(f'Max reading above static threshold at {max_index} is {max_value}')
+            elif max_value > threshold_dynamic and max_value < threshold:
+                self.get_logger().info(f'Max reading above dynamic threshold at {max_index} is {max_value}')
+            else:
+                self.get_logger().info(f'Max reading above both thresholds at {max_index} is {max_value}')
+            
 
             if max_index == self.target_index:
                 #self.stop()
@@ -100,7 +112,15 @@ class Aligner(Node):
                 direction = self.get_rotation_direction(max_index)
                 self.rotate(direction)
         else:
-            self.rotate(direction)
+            if self.rotation_start_time is None:
+                self.rotation_start_time = current_time
+            if (current_time - self.rotation_start_time).nanoseconds / 1e9 <= self.rotation_timeout:
+                self.rotate(direction)
+            else:
+                self.stop()
+                self.align_complete = True
+                self.aligner_complete_pub.publish(Bool(data=self.align_complete))
+                self.align_now = False
 
     def align_service_callback(self, request, response):
         self.get_logger().info('Aligning robot...')
