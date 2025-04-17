@@ -47,7 +47,7 @@ class Aligner(Node):
         self.converting = False
 
         self.rotation_start_time = None
-        self.rotation_timeout = 10
+        self.rotation_timeout = 22
     
     def scan_callback(self, msg):
         if self.converting == True:
@@ -57,11 +57,13 @@ class Aligner(Node):
         self.distances[self.distances==0] = np.nan
         self.distance_at_zero = 0
         count = 0
-        for i in range(-4, 5):
+        swerve = []
+        for i in range(-90, 91):
             if not np.isnan(self.distances[i]):
-                self.distance_at_zero += self.distances[i]
-                count += 1
-        self.distance_at_zero /= count if count > 0 else 0.5 
+                swerve.append(self.distances[i])
+        swerve1 = sorted(swerve)
+        self.distance_at_zero = np.average([swerve1[1], swerve1[2], swerve1[3]])
+
 
         # self.get_logger().info(f'Distance in front of robot is {self.distance_at_zero}')
         self.converting = False
